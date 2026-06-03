@@ -1,0 +1,16 @@
+# main.zwin
+# A sample Zwin script demonstrating hardware control and logic
+
+call status_led.write(state=1)
+var distance = call sonar.read()
+
+if distance < 20 {
+    # Blink LED fast as a warning
+    call status_led.blink(count=5, delay_ms=100)
+    call motors.stop()
+} else {
+    # Drive forward safely
+    call motors.drive(left=180, right=180)
+}
+
+call status_led.write(state=0)

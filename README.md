@@ -1,14 +1,14 @@
 # ⚡ Zwin: AI-Native Scripting Language & VM
 
-Zwin is an ultra-lightweight, memory-safe, interpreted scripting language and virtual machine (VM) designed specifically for **AI Agents (LLMs)** running on resource-constrained edge hardware like the **ESP32** (microcontrollers) and **Raspberry Pi Zero 2 W** (single-board computers).
+Zwin is an ultra-lightweight, memory-safe, interpreted scripting language and virtual machine (VM) designed specifically for **AI Agents (LLMs)** running on resource-constrained edge hardware like the **ESP32** (microcontrollers) and other embedded systems.
 
 ---
 
 ## 🚀 Why Zwin?
 
-1.  **AI-Generated Safety (The Sandbox):** Unlike compiled languages (C++/Rust) or native scripts (Python/Bash) where an LLM bug can cause a division-by-zero crash, stack overflow, or memory panic, the **Zwin VM catches all execution errors safely**, printing the trace back to the AI and keeping the drone/robot running.
-2.  **Ultra-Lightweight Footprint:** The C++ Zwin VM runs in **under 2 KB of RAM** and consumes less than 15 KB of flash storage, outperforming general runtime environments.
-3.  **On-the-Fly Execution:** Execute raw text scripts dynamically over Wi-Fi, Bluetooth, or Serial at runtime without compiling or rebooting the hardware.
+1. **AI-Generated Safety (The Sandbox):** Unlike compiled languages (C++/Rust) or native scripts (Python/Bash) where an LLM bug can cause a division-by-zero crash, stack overflow, or memory panic, the **Zwin VM catches all execution errors safely**, printing the traceback back to the AI and keeping the edge device running.
+2. **Ultra-Lightweight Footprint:** The C++ Zwin VM runs in **under 2 KB of RAM** and consumes less than 15 KB of flash storage, outperforming general scripting runtimes.
+3. **On-the-Fly Execution:** Execute raw text scripts dynamically over Wi-Fi, Bluetooth, or Serial at runtime without compiling or rebooting the hardware.
 
 ---
 
@@ -32,50 +32,44 @@ call status_led.write(state=0)
 ```
 
 ### Supported Flow Controls
-*   `call <module>.<action>(<params>)` — Executes hardware bindings or external APIs.
-*   `var <name> = <expr>` — Declares and updates local string/float variables.
-*   `if <condition> { ... } else { ... }` — Evaluates logical comparisons.
-*   `loop <count> { ... }` — Runs static loops with safe limits to prevent infinite locks.
-*   `delay(<ms>)` — Pauses script execution.
+* `call <module>.<action>(<params>)` — Executes hardware bindings or external APIs.
+* `var <name> = <expr>` — Declares and updates local string/float variables.
+* `if <condition> { ... } else { ... }` — Evaluates logical comparisons.
+* `loop <count> { ... }` — Runs static loops with safe limits to prevent infinite locks.
+* `delay(<ms>)` — Pauses script execution.
 
 ---
 
 ## 📁 Repository Structure
 
-*   `/zig_impl` — Native Zig implementation of the Zwin client interpreter (ideal for Pi Zero).
-*   `/cpp_impl` — Portable C++ implementation of the Zwin VM and SDK bindings (compiled for Arduino/ESP32).
+* `zwin_vm.h` — Core header file for the Zwin VM interpreter.
+* `zwin_vm.cpp` — C++ implementation of the Zwin parser, validator, and execution engine.
+* `main.zwin` — A sample Zwin script demonstrating hardware integration and control logic.
 
 ---
 
 ## ⚙️ How to Build & Run
 
-### ⚡ 1. Zig Implementation (Raspberry Pi)
-Requires Zig 0.11.0+. Clone and run the script:
-
-```bash
-cd zig_impl
-export GEMINI_API_KEY="your_api_key"
-zig run main.zig
-```
-
-To compile a stripped, statically-linked release binary under **1.5 MB**:
-```bash
-zig build-exe main.zig -O ReleaseSmall -fstrip
-./main
-```
-
-### 🔌 2. C++ Implementation (ESP32 / Arduino)
-Copy the files under `/cpp_impl` directly into your Arduino or PlatformIO project structure:
+Copy `zwin_vm.h` and `zwin_vm.cpp` directly into your Arduino, ESP-IDF, or PlatformIO project structure:
 
 ```cpp
 #include "zwin_vm.h"
 
 ZwinVM vm;
 
+// Define your custom hardware bindings
+String led_write_cb(const String& params) {
+    int state = params.indexOf("state=1") >= 0 ? 1 : 0;
+    digitalWrite(LED_BUILTIN, state);
+    return "1";
+}
+
 void setup() {
+    Serial.begin(115200);
     vm.begin();
-    // Register your hardware bindings here
-    vm.registerFunction("status_led.write", your_led_func);
+    
+    // Register the binding with the VM
+    vm.registerFunction("status_led.write", led_write_cb);
 }
 
 void loop() {
@@ -94,3 +88,4 @@ void loop() {
 ## ⚖️ License
 
 Distributed under the MIT License. See `LICENSE` for more information.
+
