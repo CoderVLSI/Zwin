@@ -1,5 +1,9 @@
 # ⚡ Zwin: AI-Native Scripting Language & VM
 
+<p align="center">
+  <img src="zwin_banner.png" alt="Zwin Banner" width="100%" />
+</p>
+
 Zwin is an ultra-lightweight, memory-safe, interpreted scripting language and virtual machine (VM) designed specifically for **AI Agents (LLMs)** running on resource-constrained edge hardware like the **ESP32** (microcontrollers) and other embedded systems.
 
 ---
