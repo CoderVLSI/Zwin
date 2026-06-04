@@ -1,0 +1,21 @@
+# main.zwin
+# Test script for Zwin VM on PC
+
+call io.print(text="Running Zwin VM Test...")
+
+var x = 10
+var y = 20
+
+if x < y {
+    call io.print(text="Test PASSED: x is less than y")
+}
+else {
+    call io.print(text="Test FAILED: x is not less than y")
+}
+
+call io.print(text="Testing loop construct:")
+loop 3 {
+    call io.print(text="Hello from Zwin loop!")
+}
+
+call io.print(text="Test complete.")

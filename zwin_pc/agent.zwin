@@ -1,0 +1,55 @@
+# agent.zwin
+# A complete OpenClaw Routing Gateway & Hermes Learning Loop in Zwin.
+
+call io.print(text="=== Zwin Hermes Agent v0.1 ===")
+call io.print(text="Loading configuration and memory profile...")
+
+# 1. Initialize memory profile if not exists
+var has_mem = call file.exists(filename="memory.json")
+if has_mem == 0 {
+    call file.write(filename="memory.json", content="User: Admin. Preferences: Prefers native compiled tools and zero runtimes.")
+}
+
+# 2. Main Agent Execution Loop
+var loop_active = 1
+loop 50 {
+    if loop_active == 1 {
+        call io.print(text="")
+        call io.print(text="Say something to Hermes (type 'exit' to quit, 'status' to check system info):")
+        var user_input = call io.read()
+        
+        if user_input == "exit" {
+            call io.print(text="Exiting Zwin Agent. Goodbye!")
+            var loop_active = 0
+        }
+        
+        if user_input != "exit" {
+            if user_input == "status" {
+                call io.print(text="[SYSTEM INFO]")
+                var sys_info = call system.execute(command="Get-Date; echo 'Host: Windows PC'")
+                call io.print(text=sys_info)
+            }
+            
+            if user_input != "status" {
+                if user_input != "" {
+                    # Read memory profile (Hermes learning loop context)
+                    var memory = call file.read(filename="memory.json")
+                    
+                    # Call LLM reasoning
+                    call io.print(text="Thinking...")
+                    var response = call llm.chat(prompt=user_input)
+                    
+                    call io.print(text="")
+                    call io.print(text="Hermes Response:")
+                    call io.print(text=response)
+                    call io.print(text="")
+                    
+                    # Update profile context (Simulating learning update)
+                    call io.print(text="[Updating Profile Memory...]")
+                    call file.write(filename="memory.json", content=memory)
+                    call io.print(text="[Profile Memory Synced]")
+                }
+            }
+        }
+    }
+}
