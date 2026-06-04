@@ -46,14 +46,16 @@ call status_led.write(state=0)
 
 ## 📁 Repository Structure
 
-* `zwin_vm.h` — Core header file for the Zwin VM interpreter.
-* `zwin_vm.cpp` — C++ implementation of the Zwin parser, validator, and execution engine.
+* `zwin_vm.h` — Core header file for the Zwin VM interpreter (ESP32 / C++).
+* `zwin_vm.cpp` — C++ implementation of the Zwin VM interpreter (ESP32 / C++).
 * `main.zwin` — A sample Zwin script demonstrating hardware integration and control logic.
+* `zwin_pc/` — Standalone, instant-launching PC runner written in safe Rust. Enables running Zwin scripts and full agent loops (Gemini, File, Telegram) natively on PC.
 
 ---
 
 ## ⚙️ How to Build & Run
 
+### 🔌 1. Microcontroller Installation (ESP32 / Arduino)
 Copy `zwin_vm.h` and `zwin_vm.cpp` directly into your Arduino, ESP-IDF, or PlatformIO project structure:
 
 ```cpp
@@ -87,9 +89,38 @@ void loop() {
 }
 ```
 
+### 💻 2. PC Installation (Rust VM Runner)
+Navigate to `/zwin_pc` and compile the runner natively:
+```bash
+cd zwin_pc
+cargo build --release
+./target/release/zwin main.zwin
+```
+
+---
+
+## 🤖 Hardware & PC Emulation
+
+Zwin code is fully portable. The same `.zwin` script can run on a microcontroller (managing DC motor pulses and sonar frequencies) or on a PC (querying LLM endpoints, managing local files, or polling Telegram).
+
+<p align="center">
+  <img src="zwin_robot_claw.png" alt="Zwin Robot Claw" width="80%" />
+</p>
+
+### Microcontroller Setup (ESP32 / Claw Robot)
+Mount your ESP32 board and a motor driver (like MX1508) onto a 2WD robotic car chassis. Using the registered C++ bindings, the robot can drive and sense obstacles autonomously:
+```zwin
+call status_led.write(state=1)
+var dist = call sonar.read()
+if dist < 20 {
+    call motors.stop()
+}
+```
+
 ---
 
 ## ⚖️ License
 
 Distributed under the MIT License. See `LICENSE` for more information.
+
 
