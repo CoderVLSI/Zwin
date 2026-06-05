@@ -73,37 +73,12 @@ impl ZwinVM {
         self.functions.insert(name.to_string(), func);
     }
 
-    fn set_var_num(&mut self, name: &str, val: f64) {
-        self.variables.insert(name.to_string(), ZwinValue::Number(val));
-    }
-
-    fn set_var_str(&mut self, name: &str, val: &str) {
-        self.variables.insert(name.to_string(), ZwinValue::String(val.to_string()));
-    }
-
-    fn get_var_num(&self, name: &str, default: f64) -> f64 {
-        if let Some(val) = self.variables.get(name) {
-            val.to_float()
-        } else {
-            default
-        }
-    }
-
-    fn get_var_str(&self, name: &str, default: &str) -> String {
-        if let Some(val) = self.variables.get(name) {
-            val.to_string()
-        } else {
-            default.to_string()
-        }
-    }
-
     fn evaluate_expression(&self, expr: &str) -> Result<ZwinValue, String> {
         let trimmed = expr.trim();
         
         // 1. Function Call
         if trimmed.starts_with("call ") {
             let res = self.execute_call(trimmed)?;
-            // Attempt to treat return val as numeric if it parses clean
             if let Ok(n) = res.parse::<f64>() {
                 return Ok(ZwinValue::Number(n));
             }
@@ -129,7 +104,6 @@ impl ZwinVM {
     }
 
     fn evaluate_condition(&self, cond: &str) -> Result<bool, String> {
-        // Supported operators: ==, !=, <=, >=, <, >
         let operators = ["==", "!=", "<=", ">=", "<", ">"];
         let mut found_op = None;
         
@@ -170,7 +144,6 @@ impl ZwinVM {
                 }
             }
         } else {
-            // Evaluate single expression (e.g. if x)
             let val = self.evaluate_expression(cond)?;
             match val {
                 ZwinValue::Number(n) => Ok(n != 0.0),
@@ -191,7 +164,6 @@ impl ZwinVM {
         let func_name = call_str[call_offset..paren_open].trim();
         let params = call_str[paren_open + 1..paren_close].trim();
 
-        // Dynamically evaluate parameters: e.g. param=expr
         let mut evaluated_params = String::new();
         let mut param_idx = 0;
         
@@ -204,9 +176,8 @@ impl ZwinVM {
                 }
             };
 
-            evaluated_params.push_str(&params[param_idx..eq_idx + 1]); // Add key and '='
+            evaluated_params.push_str(&params[param_idx..eq_idx + 1]);
 
-            // Find the next comma that is NOT inside quotes
             let mut comma_idx = None;
             let mut in_quotes = false;
             let bytes = params.as_bytes();
@@ -228,7 +199,6 @@ impl ZwinVM {
 
             let eval_val = self.evaluate_expression(raw_val)?.to_string();
             
-            // Format evaluation back to capability call format (quotes if string/chars)
             let is_numeric = eval_val.parse::<f64>().is_ok();
             if is_numeric {
                 evaluated_params.push_str(&eval_val);
@@ -269,18 +239,15 @@ impl ZwinVM {
 
             let mut line = lines[pc].trim();
             
-            // Skip comments and empty lines
             if line.is_empty() || line.starts_with('#') {
                 pc += 1;
                 continue;
             }
 
-            // Inline trailing comment strip
             if let Some(comment_idx) = line.find('#') {
                 line = line[0..comment_idx].trim();
             }
 
-            // Handle block close
             if line == "}" {
                 if self.block_stack.is_empty() {
                     return Err(format!("Syntax error on line {}: Unmatched closing brace '}}'.", pc + 1));
@@ -297,7 +264,6 @@ impl ZwinVM {
                 continue;
             }
 
-            // Determine execution activation state based on stack parent scopes
             let mut should_execute = true;
             for block in &self.block_stack {
                 if !block.active {
@@ -306,7 +272,6 @@ impl ZwinVM {
                 }
             }
 
-            // Handle conditional header scopes
             if line.starts_with("if ") && line.ends_with('{') {
                 let mut cond_result = false;
                 if should_execute {
@@ -355,7 +320,6 @@ impl ZwinVM {
                 continue;
             }
 
-            // Process statements
             if line.starts_with("var ") {
                 let eq_idx = line.find('=').ok_or(format!("Syntax error on line {}: Missing '=' in variable declaration.", pc + 1))?;
                 let var_name = line[4..eq_idx].trim().to_string();
@@ -419,6 +383,25 @@ fn get_param_value(params: &str, key: &str) -> String {
     } else {
         "".to_string()
     }
+}
+
+// Registers standard capabilities
+fn register_standard_functions(vm: &mut ZwinVM) {
+    vm.register_function("io.print", cb_io_print);
+    vm.register_function("io.read", cb_io_read);
+    vm.register_function("file.write", cb_file_write);
+    vm.register_function("file.read", cb_file_read);
+    vm.register_function("file.delete", cb_file_delete);
+    vm.register_function("file.exists", cb_file_exists);
+    vm.register_function("system.execute", cb_system_execute);
+    vm.register_function("llm.chat", cb_llm_chat);
+    vm.register_function("llm.chat_openai", cb_llm_chat_openai);
+    vm.register_function("llm.chat_deepseek", cb_llm_chat_deepseek);
+    vm.register_function("telegram.send", cb_telegram_send);
+    vm.register_function("telegram.poll", cb_telegram_poll);
+    vm.register_function("skills.run", cb_skills_run);
+    vm.register_function("skills.register", cb_skills_register);
+    vm.register_function("str.concat", cb_str_concat);
 }
 
 // ---------------------------------------------------------------------------
@@ -495,6 +478,22 @@ fn cb_system_execute(params: &str) -> String {
         return "Error: Missing command parameter.".to_string();
     }
     
+    // Security Allowlist from ZeroClaw (command checking)
+    let command_lower = command.to_lowercase();
+    let is_safe = command_lower.starts_with("echo") || 
+                  command_lower.starts_with("get-date") || 
+                  command_lower.starts_with("dir") || 
+                  command_lower.starts_with("ls") || 
+                  command_lower.starts_with("cat") || 
+                  command_lower.starts_with("type") ||
+                  command_lower.starts_with("whoami") ||
+                  command_lower.starts_with("hostname") ||
+                  env::var("ZWIN_ALLOW_UNSAFE_COMMANDS").unwrap_or_default() == "1";
+                  
+    if !is_safe {
+        return "Security Error: Command blocked by Zwin VM allowlist (ZeroClaw security policy). To override, set ZWIN_ALLOW_UNSAFE_COMMANDS=1.".to_string();
+    }
+    
     let output = if cfg!(target_os = "windows") {
         Command::new("powershell")
             .args(&["-Command", &command])
@@ -561,6 +560,102 @@ fn cb_llm_chat(params: &str) -> String {
     }
 }
 
+fn cb_llm_chat_openai(params: &str) -> String {
+    let prompt = get_param_value(params, "prompt");
+    let api_key = get_param_value(params, "api_key");
+    let model = get_param_value(params, "model");
+    
+    let key = if api_key.is_empty() {
+        env::var("OPENAI_API_KEY").unwrap_or_default()
+    } else {
+        api_key
+    };
+    
+    let model_name = if model.is_empty() {
+        "gpt-4o-mini".to_string()
+    } else {
+        model
+    };
+    
+    if key.is_empty() {
+        return "Error: OpenAI API key is not set.".to_string();
+    }
+    
+    let url = "https://api.openai.com/v1/chat/completions";
+    let client = reqwest::blocking::Client::new();
+    let body = serde_json::json!({
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}]
+    });
+    
+    match client.post(url)
+        .header("Authorization", format!("Bearer {}", key))
+        .json(&body)
+        .send() {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                if let Ok(res_json) = resp.json::<serde_json::Value>() {
+                    if let Some(text) = res_json["choices"][0]["message"]["content"].as_str() {
+                        return text.to_string();
+                    }
+                }
+                "Error: Failed to parse OpenAI response JSON.".to_string()
+            } else {
+                format!("Error: OpenAI API returned status {}.", resp.status())
+            }
+        }
+        Err(e) => format!("Error: Failed to connect to OpenAI. {}", e),
+    }
+}
+
+fn cb_llm_chat_deepseek(params: &str) -> String {
+    let prompt = get_param_value(params, "prompt");
+    let api_key = get_param_value(params, "api_key");
+    let model = get_param_value(params, "model");
+    
+    let key = if api_key.is_empty() {
+        env::var("DEEPSEEK_API_KEY").unwrap_or_default()
+    } else {
+        api_key
+    };
+    
+    let model_name = if model.is_empty() {
+        "deepseek-chat".to_string()
+    } else {
+        model
+    };
+    
+    if key.is_empty() {
+        return "Error: DeepSeek API key is not set.".to_string();
+    }
+    
+    let url = "https://api.deepseek.com/v1/chat/completions";
+    let client = reqwest::blocking::Client::new();
+    let body = serde_json::json!({
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}]
+    });
+    
+    match client.post(url)
+        .header("Authorization", format!("Bearer {}", key))
+        .json(&body)
+        .send() {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                if let Ok(res_json) = resp.json::<serde_json::Value>() {
+                    if let Some(text) = res_json["choices"][0]["message"]["content"].as_str() {
+                        return text.to_string();
+                    }
+                }
+                "Error: Failed to parse DeepSeek response JSON.".to_string()
+            } else {
+                format!("Error: DeepSeek API returned status {}.", resp.status())
+            }
+        }
+        Err(e) => format!("Error: Failed to connect to DeepSeek. {}", e),
+    }
+}
+
 fn cb_telegram_send(params: &str) -> String {
     let token = get_param_value(params, "token");
     let chat_id = get_param_value(params, "chat_id");
@@ -615,6 +710,81 @@ fn cb_telegram_poll(params: &str) -> String {
     }
 }
 
+// Hermes self-evolving skill execution: run a sub-script locally
+fn cb_skills_run(params: &str) -> String {
+    let name = get_param_value(params, "name");
+    if name.is_empty() {
+        return "Error: Missing name parameter.".to_string();
+    }
+    let path = format!("skills/{}.zwin", name);
+    match fs::read_to_string(&path) {
+        Ok(script) => {
+            let mut sub_vm = ZwinVM::new();
+            register_standard_functions(&mut sub_vm);
+            match sub_vm.execute(&script) {
+                Ok(_) => "Success".to_string(),
+                Err(e) => format!("Error executing skill '{}': {}", name, e),
+            }
+        }
+        Err(e) => format!("Error: Skill '{}' not found. {}", name, e),
+    }
+}
+
+// Hermes self-evolving skill registration: save a new script
+fn cb_skills_register(params: &str) -> String {
+    let name = get_param_value(params, "name");
+    let code = get_param_value(params, "code");
+    if name.is_empty() || code.is_empty() {
+        return "Error: Missing name or code parameter.".to_string();
+    }
+    let _ = fs::create_dir_all("skills");
+    let path = format!("skills/{}.zwin", name);
+    match fs::write(&path, code) {
+        Ok(_) => "1".to_string(),
+        Err(e) => format!("Error registering skill: {}", e),
+    }
+}
+
+// Zwin string helper: Concatenates arguments alphabetically or in parsing order
+fn cb_str_concat(params: &str) -> String {
+    let mut result = String::new();
+    let mut current_val = String::new();
+    let mut in_quotes = false;
+    let mut in_val = false;
+    let bytes = params.as_bytes();
+    let mut i = 0;
+    
+    while i < params.len() {
+        let c = bytes[i] as char;
+        if c == '"' {
+            in_quotes = !in_quotes;
+            i += 1;
+            continue;
+        }
+        
+        if in_quotes {
+            current_val.push(c);
+        } else {
+            if c == '=' {
+                in_val = true;
+                current_val.clear();
+            } else if c == ',' {
+                if in_val {
+                    result.push_str(&current_val.trim());
+                    in_val = false;
+                }
+            } else if in_val {
+                current_val.push(c);
+            }
+        }
+        i += 1;
+    }
+    if in_val {
+        result.push_str(&current_val.trim());
+    }
+    result
+}
+
 // ---------------------------------------------------------------------------
 // 5. Main CLI Entry Point
 // ---------------------------------------------------------------------------
@@ -622,7 +792,8 @@ fn cb_telegram_poll(params: &str) -> String {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        println!("⚡ Zwin VM PC Runner v0.1");
+        println!("⚡ Zwin VM PC Runner v0.2");
+        println!("Supported Features: ZeroClaw Security, Hermes Skill Registry, Multi-Model (Gemini/OpenAI/DeepSeek)");
         println!("Usage: zwin <script.zwin>");
         return;
     }
@@ -638,17 +809,8 @@ fn main() {
 
     let mut vm = ZwinVM::new();
     
-    // Register PC native SDK functions
-    vm.register_function("io.print", cb_io_print);
-    vm.register_function("io.read", cb_io_read);
-    vm.register_function("file.write", cb_file_write);
-    vm.register_function("file.read", cb_file_read);
-    vm.register_function("file.delete", cb_file_delete);
-    vm.register_function("file.exists", cb_file_exists);
-    vm.register_function("system.execute", cb_system_execute);
-    vm.register_function("llm.chat", cb_llm_chat);
-    vm.register_function("telegram.send", cb_telegram_send);
-    vm.register_function("telegram.poll", cb_telegram_poll);
+    // Register standard functions
+    register_standard_functions(&mut vm);
 
     match vm.execute(&script) {
         Ok(_) => {}
