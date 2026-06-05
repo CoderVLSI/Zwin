@@ -1,21 +1,24 @@
 # agent.zwin
-# A complete OpenClaw Routing Gateway & Hermes Learning Loop in Zwin.
+# Zwin Ultimate ReAct Agent & Autonomy Controller
 
-call io.print(text="=== Zwin Hermes Agent v0.1 ===")
-call io.print(text="Loading configuration and memory profile...")
+call io.print(text="🦞 === Zwin ReAct Agent v0.3 ===")
+call io.print(text="[SYSTEM] Loading profile identity and memory context...")
 
-# 1. Initialize memory profile if not exists
+# 1. Initialize folders and state
+var has_projects = call file.exists(filename="projects")
+if has_projects == 0 {
+    call file.make_dir(path="projects")
+}
 var has_mem = call file.exists(filename="memory.json")
 if has_mem == 0 {
-    call file.write(filename="memory.json", content="User: Admin. Preferences: Prefers native compiled tools and zero runtimes.")
+    call file.write(filename="memory.json", content="User: Admin. Personality: Dinosaur helper.")
 }
 
-# 2. Main Agent Execution Loop
 var loop_active = 1
-loop 50 {
+loop 30 {
     if loop_active == 1 {
         call io.print(text="")
-        call io.print(text="Say something to Hermes (type 'exit' to quit, 'status' to check system info):")
+        call io.print(text="Enter query (or type 'exit', 'cron', 'mcp'):")
         var user_input = call io.read()
         
         if user_input == "exit" {
@@ -24,30 +27,50 @@ loop 50 {
         }
         
         if user_input != "exit" {
-            if user_input == "status" {
-                call io.print(text="[SYSTEM INFO]")
-                var sys_info = call system.execute(command="Get-Date; echo 'Host: Windows PC'")
-                call io.print(text=sys_info)
+            # Check shortcut triggers
+            if user_input == "cron" {
+                call io.print(text="=== Scheduled Cron Jobs ===")
+                var jobs = call scheduler.cron_list()
+                call io.print(text=jobs)
+            }
+            if user_input == "mcp" {
+                call io.print(text="=== Querying MCP Tool Bridge ===")
+                # Example JSON arguments wrapped in string
+                var mcp_res = call mcp.call_tool(url="http://localhost:3000/call", tool="search", arguments="{\"query\": \"latest tech news\"}")
+                call io.print(text=mcp_res)
             }
             
-            if user_input != "status" {
-                if user_input != "" {
-                    # Read memory profile (Hermes learning loop context)
-                    var memory = call file.read(filename="memory.json")
-                    
-                    # Call LLM reasoning
-                    call io.print(text="Thinking...")
-                    var response = call llm.chat(prompt=user_input)
-                    
-                    call io.print(text="")
-                    call io.print(text="Hermes Response:")
-                    call io.print(text=response)
-                    call io.print(text="")
-                    
-                    # Update profile context (Simulating learning update)
-                    call io.print(text="[Updating Profile Memory...]")
-                    call file.write(filename="memory.json", content=memory)
-                    call io.print(text="[Profile Memory Synced]")
+            if user_input != "cron" {
+                if user_input != "mcp" {
+                    if user_input != "" {
+                        # Load memory profile context
+                        var memory = call file.read(filename="memory.json")
+                        
+                        # ReAct Prompt engineering
+                        var system_prompt = "You are Timi, a clever dinosaur assistant. Format thought process strictly like this:\n"
+                        var step_format = "🤔 THINK: <your reasoning>\n⚡ DO: <zwin VM capability call>\n✅ ANSWER: <final response>\n"
+                        var tool_list = "Available Capabilities:\n- io.print(text)\n- file.write(filename, content)\n- file.read(filename)\n- file.list_dir(path)\n- file.make_dir(path)\n- system.execute(command)\n- llm.chat_fallback(prompt)\n- scheduler.cron_add(expr, command)\n- email.send(to, subject, body)\n"
+                        
+                        var full_prompt = call str.concat(a=system_prompt, b=step_format, c=tool_list, d="\nUser context: ", e=memory, f="\nUser Query: ", g=user_input)
+                        
+                        call io.print(text="Thinking...")
+                        # Multi-provider fallback chat
+                        var response = call llm.chat_fallback(prompt=full_prompt)
+                        
+                        call io.print(text="")
+                        call io.print(text="Agent Response:")
+                        call io.print(text=response)
+                        call io.print(text="")
+                        
+                        # Simulating Hermetic memory learning loop updates
+                        var learn_prompt = call str.concat(a="Extract any user preferences, preferred names, or schedule dates from this message: '", b=user_input, c="'. Format as bullet points.")
+                        var facts = call llm.chat_fallback(prompt=learn_prompt)
+                        if facts != "" {
+                            call io.print(text="[Updating memory profile with extracted facts...]")
+                            var updated_memory = call str.concat(a=memory, b="\n", c=facts)
+                            call file.write(filename="memory.json", content=updated_memory)
+                        }
+                    }
                 }
             }
         }

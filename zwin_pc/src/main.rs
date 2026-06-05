@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
+use std::sync::Mutex;
 
 // ---------------------------------------------------------------------------
 // 1. Zwin Value and Block Types
@@ -402,6 +403,14 @@ fn register_standard_functions(vm: &mut ZwinVM) {
     vm.register_function("skills.run", cb_skills_run);
     vm.register_function("skills.register", cb_skills_register);
     vm.register_function("str.concat", cb_str_concat);
+    vm.register_function("llm.chat_fallback", cb_llm_chat_fallback);
+    vm.register_function("mcp.call_tool", cb_mcp_call_tool);
+    vm.register_function("scheduler.cron_add", cb_scheduler_cron_add);
+    vm.register_function("scheduler.cron_list", cb_scheduler_cron_list);
+    vm.register_function("scheduler.cron_clear", cb_scheduler_cron_clear);
+    vm.register_function("file.list_dir", cb_file_list_dir);
+    vm.register_function("file.make_dir", cb_file_make_dir);
+    vm.register_function("email.send", cb_email_send);
 }
 
 // ---------------------------------------------------------------------------
@@ -786,14 +795,347 @@ fn cb_str_concat(params: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// 4b. Zwin Ultimate Platform Capabilities
+// ---------------------------------------------------------------------------
+
+#[repr(C)]
+struct Tm {
+    tm_sec: i32,
+    tm_min: i32,
+    tm_hour: i32,
+    tm_mday: i32,
+    tm_mon: i32,
+    tm_year: i32,
+    tm_wday: i32,
+    tm_yday: i32,
+    tm_isdst: i32,
+}
+
+extern "C" {
+    fn time(time: *mut i64) -> i64;
+    fn localtime(time: *const i64) -> *const Tm;
+}
+
+fn get_local_time_fields() -> (i32, i32, i32, i32, i32) { // min, hour, mday, mon, wday
+    unsafe {
+        let mut t = 0i64;
+        time(&mut t);
+        let tm_ptr = localtime(&t);
+        if !tm_ptr.is_null() {
+            let tm = &*tm_ptr;
+            (tm.tm_min, tm.tm_hour, tm.tm_mday, tm.tm_mon + 1, tm.tm_wday)
+        } else {
+            (0, 0, 1, 1, 0)
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CronJob {
+    id: usize,
+    expr: String,
+    command: String,
+}
+
+static CRON_JOBS: Mutex<Vec<CronJob>> = Mutex::new(Vec::new());
+static NEXT_CRON_ID: Mutex<usize> = Mutex::new(1);
+
+fn matches_field(field_val: i32, pattern: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if pattern.starts_with("*/") {
+        if let Ok(step) = pattern[2..].parse::<i32>() {
+            return field_val % step == 0;
+        }
+    }
+    if pattern.contains(',') {
+        return pattern.split(',').any(|part| matches_field(field_val, part));
+    }
+    if pattern.contains('-') {
+        let parts: Vec<&str> = pattern.split('-').collect();
+        if parts.len() == 2 {
+            if let (Ok(start), Ok(end)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
+                return field_val >= start && field_val <= end;
+            }
+        }
+    }
+    if let Ok(val) = pattern.parse::<i32>() {
+        return field_val == val;
+    }
+    false
+}
+
+fn matches_cron(expr: &str, min: i32, hour: i32, mday: i32, mon: i32, wday: i32) -> bool {
+    let parts: Vec<&str> = expr.split_whitespace().collect();
+    if parts.len() != 5 {
+        return false;
+    }
+    matches_field(min, parts[0]) &&
+    matches_field(hour, parts[1]) &&
+    matches_field(mday, parts[2]) &&
+    matches_field(mon, parts[3]) &&
+    matches_field(wday, parts[4])
+}
+
+fn start_cron_scheduler() {
+    thread::spawn(|| {
+        let mut last_min = -1;
+        loop {
+            let (min, hour, mday, mon, wday) = get_local_time_fields();
+            if min != last_min {
+                last_min = min;
+                
+                let jobs = {
+                    let lock = CRON_JOBS.lock().unwrap();
+                    lock.clone()
+                };
+                
+                for job in jobs {
+                    if matches_cron(&job.expr, min, hour, mday, mon, wday) {
+                        println!("[SCHEDULER] Triggering job {}: {}", job.id, job.command);
+                        let cmd = job.command.clone();
+                        thread::spawn(move || {
+                            let mut sub_vm = ZwinVM::new();
+                            register_standard_functions(&mut sub_vm);
+                            if let Err(e) = sub_vm.execute(&cmd) {
+                                eprintln!("[SCHEDULER ERROR] Job {} failed: {}", job.id, e);
+                            }
+                        });
+                    }
+                }
+            }
+            thread::sleep(Duration::from_secs(10));
+        }
+    });
+}
+
+fn cb_scheduler_cron_add(params: &str) -> String {
+    let expr = get_param_value(params, "expr");
+    let command = get_param_value(params, "command");
+    if expr.is_empty() || command.is_empty() {
+        return "Error: Missing expr or command parameter.".to_string();
+    }
+    let mut lock = CRON_JOBS.lock().unwrap();
+    let mut id_lock = NEXT_CRON_ID.lock().unwrap();
+    let id = *id_lock;
+    *id_lock += 1;
+    lock.push(CronJob {
+        id,
+        expr: expr.clone(),
+        command: command.clone(),
+    });
+    format!("{}", id)
+}
+
+fn cb_scheduler_cron_list(_params: &str) -> String {
+    let lock = CRON_JOBS.lock().unwrap();
+    if lock.is_empty() {
+        return "No cron jobs scheduled.".to_string();
+    }
+    let mut list = String::new();
+    for job in lock.iter() {
+        list.push_str(&format!("ID={}|Expr={}|Command={}\n", job.id, job.expr, job.command));
+    }
+    list.trim().to_string()
+}
+
+fn cb_scheduler_cron_clear(_params: &str) -> String {
+    let mut lock = CRON_JOBS.lock().unwrap();
+    lock.clear();
+    "1".to_string()
+}
+
+fn cb_llm_chat_fallback(params: &str) -> String {
+    let prompt = get_param_value(params, "prompt");
+    if prompt.is_empty() {
+        return "Error: Missing prompt parameter.".to_string();
+    }
+    println!("[llm.chat_fallback] Trying Gemini API...");
+    let gemini_res = cb_llm_chat(params);
+    if !gemini_res.starts_with("Error") {
+        return gemini_res;
+    }
+    println!("[llm.chat_fallback] Gemini failed: {}. Falling back to OpenAI...", gemini_res);
+    let openai_res = cb_llm_chat_openai(params);
+    if !openai_res.starts_with("Error") {
+        return format!("[FALLBACK: OpenAI]\n{}", openai_res);
+    }
+    println!("[llm.chat_fallback] OpenAI failed: {}. Falling back to DeepSeek...", openai_res);
+    let deepseek_res = cb_llm_chat_deepseek(params);
+    if !deepseek_res.starts_with("Error") {
+        return format!("[FALLBACK: DeepSeek]\n{}", deepseek_res);
+    }
+    format!("Error: All LLM providers failed. Last error: {}", deepseek_res)
+}
+
+fn cb_mcp_call_tool(params: &str) -> String {
+    let url = get_param_value(params, "url");
+    let tool = get_param_value(params, "tool");
+    let arguments = get_param_value(params, "arguments");
+    if url.is_empty() || tool.is_empty() {
+        return "Error: Missing url or tool parameter.".to_string();
+    }
+    let args_json: serde_json::Value = if arguments.is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(&arguments).unwrap_or_else(|_| serde_json::json!({ "text": arguments }))
+    };
+    let client = reqwest::blocking::Client::new();
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": format!("tools/{}", tool),
+        "params": args_json,
+        "id": 1
+    });
+    match client.post(&url).json(&payload).send() {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                if let Ok(res_json) = resp.json::<serde_json::Value>() {
+                    if let Some(result) = res_json.get("result") {
+                        if let Some(content) = result.get("content") {
+                            if let Some(arr) = content.as_array() {
+                                let mut text_out = String::new();
+                                for item in arr {
+                                    if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                                        text_out.push_str(text);
+                                    }
+                                }
+                                return text_out;
+                            }
+                        }
+                        return result.to_string();
+                    }
+                    if let Some(error) = res_json.get("error") {
+                        return format!("MCP Error: {}", error);
+                    }
+                    res_json.to_string()
+                } else {
+                    "Error: Failed to parse MCP response JSON.".to_string()
+                }
+            } else {
+                format!("Error: MCP server returned status {}.", resp.status())
+            }
+        }
+        Err(e) => format!("Error: Failed to connect to MCP server. {}", e),
+    }
+}
+
+fn cb_file_list_dir(params: &str) -> String {
+    let path = get_param_value(params, "path");
+    let target_path = if path.is_empty() { "." } else { &path };
+    match fs::read_dir(target_path) {
+        Ok(entries) => {
+            let mut list = Vec::new();
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                    if is_dir {
+                        list.push(format!("{}/", name));
+                    } else {
+                        list.push(name);
+                    }
+                }
+            }
+            list.join(", ")
+        }
+        Err(e) => format!("Error reading directory: {}", e),
+    }
+}
+
+fn cb_file_make_dir(params: &str) -> String {
+    let path = get_param_value(params, "path");
+    if path.is_empty() {
+        return "Error: Missing path parameter.".to_string();
+    }
+    match fs::create_dir_all(&path) {
+        Ok(_) => "1".to_string(),
+        Err(e) => format!("Error creating directory: {}", e),
+    }
+}
+
+fn cb_email_send(params: &str) -> String {
+    let to = get_param_value(params, "to");
+    let subject = get_param_value(params, "subject");
+    let body = get_param_value(params, "body");
+    if to.is_empty() || subject.is_empty() || body.is_empty() {
+        return "Error: Missing to, subject, or body parameter.".to_string();
+    }
+    let smtp_host = env::var("SMTP_HOST").unwrap_or_default();
+    let smtp_port = env::var("SMTP_PORT").unwrap_or_else(|_| "587".to_string());
+    let smtp_user = env::var("SMTP_USER").unwrap_or_default();
+    let smtp_pass = env::var("SMTP_PASS").unwrap_or_default();
+    if smtp_host.is_empty() || smtp_user.is_empty() || smtp_pass.is_empty() {
+        return "Error: SMTP configuration env variables (SMTP_HOST, SMTP_USER, SMTP_PASS) not set.".to_string();
+    }
+    let ps_script = format!(
+        "$secpasswd = ConvertTo-SecureString '{}' -AsPlainText -Force; \
+         $creds = New-Object System.Management.Automation.PSCredential ('{}', $secpasswd); \
+         Send-MailMessage -From '{}' -To '{}' -Subject '{}' -Body '{}' -SmtpServer '{}' -Port {} -UseSsl -Credential $creds",
+         smtp_pass.replace("'", "''"),
+         smtp_user.replace("'", "''"),
+         smtp_user.replace("'", "''"),
+         to.replace("'", "''"),
+         subject.replace("'", "''"),
+         body.replace("'", "''"),
+         smtp_host,
+         smtp_port
+    );
+    let output = if cfg!(target_os = "windows") {
+        Command::new("powershell")
+            .args(&["-Command", &ps_script])
+            .output()
+    } else {
+        let py_script = format!(
+            "import smtplib; \
+             from email.mime.text import MIMEText; \
+             msg = MIMEText('{}'); \
+             msg['Subject'] = '{}'; \
+             msg['From'] = '{}'; \
+             msg['To'] = '{}'; \
+             s = smtplib.SMTP('{}', {}); \
+             s.starttls(); \
+             s.login('{}', '{}'); \
+             s.sendmail('{}', ['{}'], msg.as_string()); \
+             s.quit()",
+             body.replace("'", "\\'"),
+             subject.replace("'", "\\'"),
+             smtp_user.replace("'", "\\'"),
+             to.replace("'", "\\'"),
+             smtp_host,
+             smtp_port,
+             smtp_user.replace("'", "\\'"),
+             smtp_pass.replace("'", "\\'"),
+             smtp_user.replace("'", "\\'"),
+             to.replace("'", "\\'")
+        );
+        Command::new("python3")
+            .args(&["-c", &py_script])
+            .output()
+    };
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                "1".to_string()
+            } else {
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                format!("Error sending email: {}", stderr)
+            }
+        }
+        Err(e) => format!("Failed to execute mail command: {}", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 5. Main CLI Entry Point
 // ---------------------------------------------------------------------------
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        println!("⚡ Zwin VM PC Runner v0.2");
-        println!("Supported Features: ZeroClaw Security, Hermes Skill Registry, Multi-Model (Gemini/OpenAI/DeepSeek)");
+        println!("⚡ Zwin VM PC Runner v0.3");
+        println!("Supported Features: ZeroClaw Security Sandbox, Hermes Skill Registry, Multi-Model Fallbacks, MCP Client, Schedulers");
         println!("Usage: zwin <script.zwin>");
         return;
     }
@@ -806,6 +1148,9 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    // Start background cron scheduler thread
+    start_cron_scheduler();
 
     let mut vm = ZwinVM::new();
     
